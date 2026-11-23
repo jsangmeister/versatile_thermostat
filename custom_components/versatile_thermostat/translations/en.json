@@ -273,12 +273,14 @@
                     "central_boiler_activation_service": "Command to turn-on",
                     "central_boiler_deactivation_service": "Command to turn-off",
                     "central_boiler_activation_delay_sec": "Activation delay (seconds)",
+                    "trv_shutoff_delay_sec": "TRV shutoff delay (seconds)",
                     "keep_alive_boiler_delay_sec": "Keep-alive delay (seconds)"
                 },
                 "data_description": {
                     "central_boiler_activation_service": "Command to turn-on the central boiler formatted like entity_id/service_name[/attribut:valeur]",
                     "central_boiler_deactivation_service": "Command to turn-off the central boiler formatted like entity_id/service_name[/attribut:valeur]",
                     "central_boiler_activation_delay_sec": "Delay in seconds before activating the central boiler when it needs to be turned on",
+                    "trv_shutoff_delay_sec": "How long to keep TRVs open after the central boiler turns off. Set to 0 to disable.",
                     "keep_alive_boiler_delay_sec": "Delay in seconds to periodically resend the boiler command if keep-alive is enabled. Set to 0 to disable keep-alive."
                 }
             },
@@ -689,12 +691,14 @@
                     "central_boiler_activation_service": "Command to turn-on",
                     "central_boiler_deactivation_service": "Command to turn-off",
                     "central_boiler_activation_delay_sec": "Activation delay (seconds)",
+                    "trv_shutoff_delay_sec": "TRV shutoff delay (seconds)",
                     "keep_alive_boiler_delay_sec": "Keep-alive delay (seconds)"
                 },
                 "data_description": {
                     "central_boiler_activation_service": "Command to turn-on the central boiler formatted like entity_id/service_name[/attribut:valeur]",
                     "central_boiler_deactivation_service": "Command to turn-off the central boiler formatted like entity_id/service_name[/attribut:valeur]",
                     "central_boiler_activation_delay_sec": "Delay in seconds before activating the central boiler when it needs to be turned on",
+                    "trv_shutoff_delay_sec": "How long to keep TRVs open after the central boiler turns off. Set to 0 to disable.",
                     "keep_alive_boiler_delay_sec": "Delay in seconds to periodically resend the boiler command if keep-alive is enabled. Set to 0 to disable keep-alive."
                 }
             },

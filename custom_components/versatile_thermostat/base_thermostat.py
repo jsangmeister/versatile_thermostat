@@ -2158,12 +2158,27 @@ class BaseThermostat(ClimateEntity, RestoreEntity, Generic[T]):
             else self.now
         )
 
-    async def async_underlying_entity_turn_off(self):
+    async def async_underlying_entity_turn_off(self, allow_central_boiler_delay: bool = True):
         """Turn heater toggleable device off. Used by Window, overpowering,
         control_heating to turn all off"""
 
         if self._cycle_scheduler:
             await self._cycle_scheduler.cancel_cycle()
+
+        if (
+            allow_central_boiler_delay
+            and self.is_used_by_central_boiler
+            and self.hvac_off_reason
+            not in (
+                HVAC_OFF_REASON_WINDOW_DETECTION,
+                HVAC_OFF_REASON_SAFETY,
+                HVAC_OFF_REASON_CENTRAL_MODE,
+                HVAC_OFF_REASON_INHIBITION,
+            )
+        ):
+            central_boiler_manager = VersatileThermostatAPI.get_vtherm_api(self._hass).central_boiler_manager
+            if await central_boiler_manager.async_delay_trv_shutoff(self._underlyings):
+                return
 
         for under in self._underlyings:
             await under.turn_off()

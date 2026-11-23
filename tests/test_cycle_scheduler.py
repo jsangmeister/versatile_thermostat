@@ -87,7 +87,7 @@ class TestCycleSchedulerLifecycle:
         underlyings[0].turn_on.return_value = False
         scheduler = CycleScheduler(make_hass(), thermostat, underlyings, 600)
 
-        async def collective_off():
+        async def collective_off(*_args, **_kwargs):
             await scheduler.cancel_cycle()
             for underlying in underlyings:
                 await underlying.turn_off()
@@ -103,6 +103,7 @@ class TestCycleSchedulerLifecycle:
         start.assert_awaited_once()
         receipt.assert_awaited_once()
         thermostat.async_underlying_entity_turn_off.assert_awaited_once()
+        assert thermostat.async_underlying_entity_turn_off.await_args.kwargs == {"allow_central_boiler_delay": False}
         assert all(under.turn_off.await_count == 1 for under in underlyings)
         assert all(under.turn_on.await_count == 0 for under in underlyings[1:])
         assert not underlyings[0]._should_be_on
@@ -228,7 +229,7 @@ class TestCycleSchedulerLifecycle:
         second.turn_on.return_value = False
         scheduler = CycleScheduler(make_hass(), thermostat, [first, second], 600)
 
-        async def collective_off():
+        async def collective_off(*_args, **_kwargs):
             await scheduler.cancel_cycle()
             await first.turn_off()
             await second.turn_off()
@@ -243,6 +244,7 @@ class TestCycleSchedulerLifecycle:
         assert await tick["callback"](None) is False
 
         thermostat.async_underlying_entity_turn_off.assert_awaited_once()
+        assert thermostat.async_underlying_entity_turn_off.await_args.kwargs == {"allow_central_boiler_delay": False}
         assert first.turn_off.await_count >= 1
         second.turn_off.assert_awaited_once()
         assert not second._should_be_on

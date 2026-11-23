@@ -3,6 +3,7 @@
 from datetime import timedelta
 from typing import Any
 
+from homeassistant.components.climate import DOMAIN as CLIMATE_DOMAIN
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import (
     HomeAssistant,
@@ -48,6 +49,8 @@ class FeatureCentralBoilerManager(BaseFeatureManager):
 
         self._activation_delay_sec: int = 0
         self._call_later_handle = None
+        self._trv_shutoff_delay_sec: int = 0
+        self._pending_trv_shutoffs: dict[Any, Any] = {}
 
         # Keep-alive tracking
         self._keep_alive_boiler_state_enabled: bool = False
@@ -80,6 +83,7 @@ class FeatureCentralBoilerManager(BaseFeatureManager):
             # The configured commands have changed: what is known about the device is not valid anymore
             self._is_on = None
         self._activation_delay_sec = entry_infos.get(CONF_CENTRAL_BOILER_ACTIVATION_DELAY_SEC, 0)
+        self._trv_shutoff_delay_sec = entry_infos.get(CONF_TRV_SHUTOFF_DELAY_SEC, 0)
         self._keep_alive_boiler_delay_sec = entry_infos.get(CONF_KEEP_ALIVE_BOILER_DELAY_SEC, DEFAULT_KEEP_ALIVE_BOILER_DELAY_SEC)
         self._is_configured = bool(self._service_activate or self._service_deactivate)
         self._keep_alive_boiler_state_enabled = self._keep_alive_boiler_delay_sec > 0 and self._is_configured
@@ -233,6 +237,9 @@ class FeatureCentralBoilerManager(BaseFeatureManager):
 
         active = self.is_nb_active_active_for_boiler_exceeded or self.is_total_power_active_for_boiler_exceeded
 
+        if active and self._pending_trv_shutoffs:
+            await self._cancel_pending_trv_shutoffs(close_unrequested=True)
+
         if not active:
             self._activation_delay_elapsed = False
 
@@ -240,6 +247,7 @@ class FeatureCentralBoilerManager(BaseFeatureManager):
             # Nothing to send anymore, even if a command was waiting for the boiler command entity
             self._stop_waiting_for_boiler_command_entity()
         else:
+            prepared_trv_shutoffs = []
             try:
                 if active:
                     write_event_log(
@@ -269,6 +277,9 @@ class FeatureCentralBoilerManager(BaseFeatureManager):
                         self._wait_for_boiler_command_entity(self._service_deactivate)
                         return
 
+                    prepared_trv_shutoffs = self._prepare_trv_shutoffs_for_boiler_deactivation()
+                    if prepared_trv_shutoffs:
+                        await self._refresh_boiler_demand_sensors()
                     write_event_log(
                         _LOGGER,
                         self,
@@ -283,6 +294,7 @@ class FeatureCentralBoilerManager(BaseFeatureManager):
                     self._stop_waiting_for_boiler_command_entity()
                     if self._keep_alive_boiler_state_enabled:
                         self._last_activated_service = self._service_deactivate
+                    self._schedule_delayed_trv_shutoffs(prepared_trv_shutoffs)
                     _send_vtherm_event(
                         data={"central_boiler": active},
                     )
@@ -294,6 +306,134 @@ class FeatureCentralBoilerManager(BaseFeatureManager):
                     self,
                     err,
                 )
+                for underlying in prepared_trv_shutoffs:
+                    underlying.cancel_central_boiler_shutoff()
+                    await underlying.turn_off()
+
+    async def async_delay_trv_shutoff(self, underlyings: list[Any]) -> bool:
+        """Keep TRV underlyings open only when their shutdown turns off the boiler."""
+        if (
+            self._trv_shutoff_delay_sec <= 0
+            or not self._is_configured
+            or not underlyings
+            or any(not callable(getattr(underlying, "prepare_central_boiler_shutoff", None)) for underlying in underlyings)
+        ):
+            return False
+
+        if all(underlying in self._pending_trv_shutoffs for underlying in underlyings):
+            return True
+        if self._is_on is not True:
+            return False
+
+        thermostat = underlyings[0]._thermostat
+        if (
+            not thermostat.is_used_by_central_boiler
+            or thermostat.hvac_off_reason
+            in (
+                HVAC_OFF_REASON_WINDOW_DETECTION,
+                HVAC_OFF_REASON_SAFETY,
+                HVAC_OFF_REASON_CENTRAL_MODE,
+                HVAC_OFF_REASON_INHIBITION,
+            )
+        ):
+            return False
+
+        for underlying in underlyings:
+            underlying.prepare_central_boiler_shutoff()
+
+        await self.refresh_active_devices()
+        if self._is_on is not False:
+            for underlying in underlyings:
+                underlying.cancel_central_boiler_shutoff()
+            await self.refresh_active_devices()
+            return False
+
+        self._schedule_delayed_trv_shutoffs(underlyings)
+        return True
+
+    def _prepare_trv_shutoffs_for_boiler_deactivation(self) -> list[Any]:
+        """Stage open TRVs with no demand before the boiler's final shutdown."""
+        if self._trv_shutoff_delay_sec <= 0 or self._is_on is not True:
+            return []
+
+        component = self._hass.data.get(CLIMATE_DOMAIN)
+        if component is None:
+            return []
+
+        prepared = []
+        emergency_reasons = (
+            HVAC_OFF_REASON_WINDOW_DETECTION,
+            HVAC_OFF_REASON_SAFETY,
+            HVAC_OFF_REASON_CENTRAL_MODE,
+            HVAC_OFF_REASON_INHIBITION,
+        )
+        for thermostat in list(component.entities):
+            if (
+                not getattr(thermostat, "is_used_by_central_boiler", False)
+                or getattr(thermostat, "hvac_off_reason", None) in emergency_reasons
+            ):
+                continue
+
+            for underlying in getattr(thermostat, "underlyings", []):
+                should_delay = getattr(underlying, "should_delay_central_boiler_shutoff", None)
+                prepare = getattr(underlying, "prepare_central_boiler_shutoff", None)
+                if callable(should_delay) and callable(prepare) and should_delay():
+                    prepare()
+                    prepared.append(underlying)
+                    thermostat.schedule_update_ha_state()
+
+        return prepared
+
+    def _schedule_delayed_trv_shutoffs(self, underlyings: list[Any]) -> None:
+        """Schedule the physical closure of staged TRVs."""
+        for underlying in underlyings:
+            if underlying in self._pending_trv_shutoffs:
+                continue
+
+            async def _finish_shutoff(_, underlying=underlying):
+                await self._finish_delayed_trv_shutoff(underlying)
+
+            self._pending_trv_shutoffs[underlying] = async_call_later(
+                self._hass,
+                timedelta(seconds=self._trv_shutoff_delay_sec),
+                _finish_shutoff,
+            )
+
+    def cancel_delayed_trv_shutoff(self, underlying: Any) -> None:
+        """Cancel a pending shutoff when this valve receives a new open command."""
+        cancel = self._pending_trv_shutoffs.pop(underlying, None)
+        if cancel is not None:
+            cancel()
+            underlying.cancel_central_boiler_shutoff()
+
+    async def _finish_delayed_trv_shutoff(self, underlying: Any) -> None:
+        """Close a delayed TRV after confirming that boiler demand is still absent."""
+        if underlying not in self._pending_trv_shutoffs:
+            return
+
+        if underlying.should_device_be_active:
+            self.cancel_delayed_trv_shutoff(underlying)
+            await self.refresh_active_devices()
+            return
+
+        await self.refresh_active_devices()
+        if underlying not in self._pending_trv_shutoffs:
+            return
+
+        self.cancel_delayed_trv_shutoff(underlying)
+        await underlying.turn_off()
+        await self.refresh_active_devices()
+
+    async def _cancel_pending_trv_shutoffs(self, close_unrequested: bool) -> None:
+        """Void outstanding delays on new demand and close valves without a new request."""
+        pending = list(self._pending_trv_shutoffs.items())
+        self._pending_trv_shutoffs.clear()
+        for underlying, cancel in pending:
+            cancel()
+            should_be_active = underlying.should_device_be_active
+            underlying.cancel_central_boiler_shutoff()
+            if close_unrequested and not should_be_active:
+                await underlying.turn_off()
 
     def _is_demand_known(self) -> bool:
         """True if the demand can be trusted: all VTherms have started and both sensors have been calculated"""
@@ -586,11 +726,15 @@ class FeatureCentralBoilerManager(BaseFeatureManager):
 
     async def refresh_active_devices(self):
         """Recalculate boiler activity sensors and the resulting boiler state."""
+        await self._refresh_boiler_demand_sensors()
+        await self.calculate_central_boiler_state(None)
+
+    async def _refresh_boiler_demand_sensors(self) -> None:
+        """Recalculate boiler demand sensors without recursively updating the boiler."""
         if self._nb_active_device_number_entity is not None:
             await self._nb_active_device_number_entity.calculate_nb_active_devices(None)
         if self._total_power_active_entity is not None:
             await self._total_power_active_entity.calculate_total_power(None)
-        await self.calculate_central_boiler_state(None)
 
     @property
     def nb_device_active_for_boiler_entity(self):

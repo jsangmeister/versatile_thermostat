@@ -247,6 +247,7 @@ class CentralConfigurationSnapshot:
                     self.entry.data,
                     (
                         "central_boiler_activation_delay_sec",
+                        "trv_shutoff_delay_sec",
                         "keep_alive_boiler_delay_sec",
                     ),
                 )

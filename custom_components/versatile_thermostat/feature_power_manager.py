@@ -307,7 +307,9 @@ class FeaturePowerManager(BaseFeatureManager):
 
             self._overpowering_state = STATE_ON
 
-            await self._vtherm.async_underlying_entity_turn_off()
+            await self._vtherm.async_underlying_entity_turn_off(
+                allow_central_boiler_delay=False
+            )
             self._vtherm.send_event(
                 EventType.POWER_EVENT,
                 {

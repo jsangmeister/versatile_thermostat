@@ -243,6 +243,7 @@ FULL_CENTRAL_CONFIG_WITH_BOILER = {
     CONF_CENTRAL_BOILER_ACTIVATION_SRV: "switch.pompe_chaudiere/switch.turn_on",
     CONF_CENTRAL_BOILER_DEACTIVATION_SRV: "switch.pompe_chaudiere/switch.turn_off",
     CONF_CENTRAL_BOILER_ACTIVATION_DELAY_SEC: 0,
+    CONF_TRV_SHUTOFF_DELAY_SEC: 0,
 }
 
 

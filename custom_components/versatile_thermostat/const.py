@@ -235,6 +235,7 @@ CONF_USE_CENTRAL_MODE = "use_central_mode"
 CONF_CENTRAL_BOILER_ACTIVATION_SRV = "central_boiler_activation_service"
 CONF_CENTRAL_BOILER_DEACTIVATION_SRV = "central_boiler_deactivation_service"
 CONF_CENTRAL_BOILER_ACTIVATION_DELAY_SEC = "central_boiler_activation_delay_sec"
+CONF_TRV_SHUTOFF_DELAY_SEC = "trv_shutoff_delay_sec"
 CONF_KEEP_ALIVE_BOILER_DELAY_SEC = "keep_alive_boiler_delay_sec"
 
 CONF_USED_BY_CENTRAL_BOILER = "used_by_controls_central_boiler"
@@ -427,6 +428,7 @@ ALL_CONF = (
         CONF_CENTRAL_BOILER_ACTIVATION_SRV,
         CONF_CENTRAL_BOILER_DEACTIVATION_SRV,
         CONF_CENTRAL_BOILER_ACTIVATION_DELAY_SEC,
+        CONF_TRV_SHUTOFF_DELAY_SEC,
         CONF_KEEP_ALIVE_BOILER_DELAY_SEC,
         CONF_WINDOW_ACTION,
         CONF_STEP_TEMPERATURE,

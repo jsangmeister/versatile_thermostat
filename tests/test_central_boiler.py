@@ -18,8 +18,9 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.components.number import DOMAIN as NUMBER_DOMAIN
 from homeassistant.components.climate import DOMAIN as CLIMATE_DOMAIN
+from homeassistant.util import dt as dt_util
 
-from pytest_homeassistant.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry, async_fire_time_changed
 
 from custom_components.versatile_thermostat.thermostat_switch import (
     ThermostatOverSwitch,
@@ -1015,6 +1016,12 @@ async def test_central_boiler_over_valve_floor_and_initial_state_catchup(
     )
 
     entity: ThermostatOverValve = await create_thermostat(hass, entry, "climate.floorvalvethermostat", temps=default_temperatures)
+    api.central_boiler_manager.post_init(
+        {
+            **FULL_CENTRAL_CONFIG_WITH_BOILER,
+            CONF_TRV_SHUTOFF_DELAY_SEC: 10,
+        }
+    )
     api.central_boiler_manager._set_nb_active_device_threshold(0)
     api.central_boiler_manager._set_total_power_active_threshold(1000)
 
@@ -1031,15 +1038,30 @@ async def test_central_boiler_over_valve_floor_and_initial_state_catchup(
     await wait_for_local_condition(lambda: valve.native_value == 100, 10)
     await wait_for_local_condition(lambda: boiler.is_on, 10)
 
-    # CA-F1: a zero TPI demand leaves the valve at the 40% physical floor.
+    # A zero TPI demand shuts down the boiler immediately but keeps the valve
+    # open during the configured residual-heat delay.
     await send_temperature_change_event(entity, 30, now + timedelta(minutes=1))
-    await wait_for_local_condition(lambda: valve.native_value == 40, 10)
     await wait_for_local_condition(lambda: not boiler.is_on, 10)
-    await wait_for_local_condition(lambda: nb_device_sensor.state == 0, 10)
+    await hass.async_block_till_done()
+    assert valve.native_value == 100
 
     assert entity.hvac_action is HVACAction.IDLE
     assert entity.device_actives == []
     assert nb_device_sensor.active_device_ids == []
+
+    # New demand cancels the outstanding shutoff; a later zero demand starts a
+    # fresh delay and closes the valve only after it expires.
+    await send_temperature_change_event(entity, 10, now + timedelta(minutes=2))
+    await wait_for_local_condition(lambda: boiler.is_on, 10)
+    assert valve.native_value == 100
+
+    await send_temperature_change_event(entity, 30, now + timedelta(minutes=3))
+    await wait_for_local_condition(lambda: not boiler.is_on, 10)
+    assert valve.native_value == 100
+
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=11))
+    await hass.async_block_till_done()
+    await wait_for_local_condition(lambda: valve.native_value == 40, 10)
 
     # CA-F3: simulate the first observed valve state after a restart. The
     # thermostat still has a real TPI demand, while the valve is at its floor.

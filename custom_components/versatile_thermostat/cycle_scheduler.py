@@ -655,7 +655,9 @@ class CycleScheduler:
     async def _cleanup_refused_start(self, states):
         """Stop the still-current cycle after an explicit ON refusal."""
         if self._states is states and self._current_hvac_mode is not None and not self._is_cancelling:
-            await self._thermostat.async_underlying_entity_turn_off()
+            await self._thermostat.async_underlying_entity_turn_off(
+                allow_central_boiler_delay=False
+            )
 
     def _init_cycle(self, on_percent: float):
         """Initialize states and penalty for the new cycle.

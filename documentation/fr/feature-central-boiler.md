@@ -58,7 +58,9 @@ Sur la page suivante vous pouvez donner la configuration des actions (ex service
 
 Le premier paramètre donne un délai en secondes avant d'activer la chaudière. La valeur par défaut est de 0 donc la chaudière est activée tout de suite dès qu'un seuil est franchi. Si vous avez besoin de laisser du temps aux vannes de s'ouvrir (par exemple), mettez une valeur positive en secondes. Certaines vannes pour des planchers chauffant peuvent mettre plusieurs minutes à s'ouvrir et il peut être dommageable d'activer la pompe de la chaudière avant que les vannes ne soient ouvertes.
 
-Le second paramètre correspond au délai du **maintien actif** (keep-alive) en secondes. Cet paramètre permet de relancer périodiquement la commande d'allumage de la chaudière pour s'assurer que la chaudière reste bien allumée. Par exemple, si une commande de la chaudière n'est pas bien reçue ou si la chaudière s'éteint d'elle-même, le même ordre sera renvoyé à intervalle régulier. La valeur par défaut est de 0, ce qui signifie que le maintien actif est désactivé. Si vous voulez activer cette fonction, mettez une valeur positive en secondes (par exemple 60 pour relancer la commande chaque minute). Ce paramètre est optionnel et peut être laissé à 0 si vous n'en avez pas besoin.
+Le paramètre suivant est le **délai de fermeture des TRV**, en secondes. Sa valeur par défaut est 0 (désactivé). Lorsque la dernière demande de chauffage disparaît et que la chaudière doit s'arrêter, celle-ci s'arrête immédiatement tandis que les TRV restent physiquement ouverts pendant cette durée afin de libérer la chaleur résiduelle. Le VTherm les signale comme inactifs pendant ce délai. Si une nouvelle demande de chauffage survient, le délai est annulé ; sinon, les TRV se ferment à son expiration. Un TRV se ferme immédiatement si la chaudière reste en marche. Les arrêts d'urgence, par exemple pour une fenêtre ouverte ou une protection de sécurité, ne sont pas retardés.
+
+Le **délai de maintien actif** (keep-alive) permet de relancer périodiquement la commande d'allumage de la chaudière afin de s'assurer qu'elle reste bien allumée. Par exemple, si une commande n'est pas reçue ou si la chaudière s'éteint d'elle-même, le même ordre sera renvoyé à intervalle régulier. La valeur par défaut est de 0, ce qui signifie que le maintien actif est désactivé. Pour l'activer, mettez une valeur positive en secondes (par exemple 60 pour relancer la commande chaque minute). Ce paramètre est optionnel et peut être laissé à 0 si vous n'en avez pas besoin.
 
 Les actions (ex services) se configurent comme indiqué dans la page :
 1. le format général est `entity_id/service_id[/attribut:valeur]` (où `/attribut:valeur` est facultatif),
@@ -82,9 +84,6 @@ Exemple pour une chaudière pilotée par un régulateur d'ambiance dont la consi
 
 > **Astuce**
 > Utilisez `float(défaut)` pour que le template n'échoue jamais, et activez le maintien actif pour que la consigne suive la température mesurée. Si un template ne peut pas être évalué, la commande est ignorée et une erreur est écrite dans les logs. Un template qui ne compile pas est refusé lors de la validation de la configuration.
-
-> **Note**
-> Il n'y a pas de délai pour l'extinction de la chaudière. C'est volontaire pour vous éviter de laisser tourner la chaudière alors que toutes les vannes sont fermées. Il faudrait un délai négatif pour bien faire (ie couper la chaudière avant de fermer les vannes) mais ce n'est pas possible en l'état puisque c'est la manipulation des vannes qui délcenche la chaudière et pas l'inverse.
 
 ### Comment trouver la bonne action ?
 Pour trouver l'action à utiliser, le mieux est d'aller dans "Outils de développement / Actions", chercher l'action à appeler, l'entité à commander et l'éventuel paramètre à donner.

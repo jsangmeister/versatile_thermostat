@@ -1393,6 +1393,7 @@ class UnderlyingValve(UnderlyingEntity):
         self._max_closing_degree = max_closing_degree
         self._opening_threshold = opening_threshold
         self._has_valve_control = has_valve_control
+        self._central_boiler_shutoff_pending = False
 
     def init_valve_state_min_max_open(self):
         """Initialize the min and max open percent"""
@@ -1454,11 +1455,15 @@ class UnderlyingValve(UnderlyingEntity):
         """Send the percent open to the underlying valve. The cause is only used by valve-regulation underlyings"""
         # This may fails if called after shutdown
         value = self._percent_open if fixed_value is None else fixed_value
+        if value > 0 and self._central_boiler_shutoff_pending:
+            self._api.central_boiler_manager.cancel_delayed_trv_shutoff(self)
         await self.send_value_to_number(self._entity_id, value)
         self._last_sent_opening_value = value
 
     async def turn_off(self):
         """Turn heater toggleable device off."""
+        if self._central_boiler_shutoff_pending:
+            self._api.central_boiler_manager.cancel_delayed_trv_shutoff(self)
         _LOGGER.debug("%s - Stopping underlying valve entity %s", self, self._entity_id)
         # Issue 341
         is_active = self.is_device_active
@@ -1470,6 +1475,32 @@ class UnderlyingValve(UnderlyingEntity):
     async def turn_on(self):
         """Nothing to do for Valve because it cannot be turned on"""
         await self.set_valve_open_percent()
+
+    def prepare_central_boiler_shutoff(self) -> None:
+        """Report the valve closed while its physical opening is retained."""
+        self._central_boiler_shutoff_pending = True
+        self._percent_open = self._get_controlled_percent(0)
+        self._raw_percent_open = 0
+
+    def should_delay_central_boiler_shutoff(self) -> bool:
+        """Return whether this open valve has no current heating demand."""
+        if self._central_boiler_shutoff_pending or self.is_device_active is not True:
+            return False
+
+        if self._thermostat.vtherm_hvac_mode == VThermHvacMode_OFF:
+            return True
+
+        requested_opening = getattr(self._thermostat, "valve_open_percent", None)
+        if not isinstance(requested_opening, (int, float)):
+            return False
+
+        if self._has_valve_control:
+            return requested_opening <= 0 or requested_opening < self._opening_threshold
+        return requested_opening <= (self._min_open or 0)
+
+    def cancel_central_boiler_shutoff(self) -> None:
+        """Clear the logical pending-shutoff state."""
+        self._central_boiler_shutoff_pending = False
 
     @overrides
     async def async_inhibition_stop(self):
@@ -1491,6 +1522,9 @@ class UnderlyingValve(UnderlyingEntity):
         if hvac_mode == VThermHvacMode_OFF:
             self._raw_percent_open = 0
             if self.is_device_active:
+                if await self._api.central_boiler_manager.async_delay_trv_shutoff([self]):
+                    self._hvac_mode = hvac_mode
+                    return True
                 await self.turn_off()
             elif self.is_initialized:
                 self._percent_open = self._get_controlled_percent(0)
@@ -1507,6 +1541,13 @@ class UnderlyingValve(UnderlyingEntity):
     @property
     def should_device_be_active(self) -> bool:
         """If the toggleable device is currently active."""
+        if self._central_boiler_shutoff_pending:
+            requested_opening = getattr(self._thermostat, "valve_open_percent", None)
+            if isinstance(requested_opening, (int, float)):
+                if self._has_valve_control:
+                    return requested_opening > 0 and requested_opening >= self._opening_threshold
+                return requested_opening > (self._min_open or 0)
+
         if not self._has_valve_control:
             return self._percent_open > (self._min_open or 0) if isinstance(self._percent_open, (int, float)) else False
 
@@ -1519,6 +1560,9 @@ class UnderlyingValve(UnderlyingEntity):
     @property
     def is_device_active(self) -> bool | None:
         """If the toggleable device is currently active."""
+        if self._central_boiler_shutoff_pending:
+            return self.should_device_be_active
+
         if (current_opening := self.current_valve_opening) is None:
             return None
 
@@ -1550,6 +1594,7 @@ class UnderlyingValve(UnderlyingEntity):
     async def set_valve_open_percent(self):
         """Update the valve open percent"""
         raw_percent = self._thermostat.valve_open_percent
+        was_device_active = self.should_device_be_active
         self._raw_percent_open = raw_percent
         caped_val = self._get_controlled_percent(raw_percent)
         if self._percent_open == caped_val:
@@ -1557,6 +1602,10 @@ class UnderlyingValve(UnderlyingEntity):
             return
 
         self._percent_open = caped_val
+        if was_device_active and not self.should_device_be_active:
+            if await self._api.central_boiler_manager.async_delay_trv_shutoff([self]):
+                return
+
         # Send the new command to valve via a service call
 
         _LOGGER.info(
@@ -1909,6 +1958,8 @@ class UnderlyingValveRegulation(UnderlyingValve):
         """Send the percent open to the underlying valve"""
         # Caclulate percent_open
         value = self._percent_open if fixed_value is None else fixed_value
+        if value > 0 and self._central_boiler_shutoff_pending:
+            self._api.central_boiler_manager.cancel_delayed_trv_shutoff(self)
         opening_degree, closing_degree = OpeningClosingDegreeCalculation.calculate_opening_closing_degree(
             brut_valve_open_percent=value,
             min_opening_degree=self._min_opening_degree,
@@ -1999,12 +2050,18 @@ class UnderlyingValveRegulation(UnderlyingValve):
     @property
     def is_device_active(self):
         """If the opening valve is open. The real opening value is used here. So we need to compare with 100 - max_closing which the max closing value if the valve is closed."""
+        if self._central_boiler_shutoff_pending:
+            return self.should_device_be_active
+
         val = self.current_valve_opening
         return val > (100 - self._max_closing_degree) if isinstance(val, (int, float)) else False
 
     @property
     def should_device_be_active(self):
         """If the opening valve is open. The real opening value is used here. So we need to compare with 100 - max_closing which the max closing value if the valve is closed."""
+        if self._central_boiler_shutoff_pending:
+            return super().should_device_be_active
+
         # return value > (100 - self._max_closing_degree) # TODO why this ?
         return self.hvac_mode not in [VThermHvacMode_OFF] and self._percent_open > self._opening_threshold if isinstance(self._percent_open, (int, float)) else False
 
